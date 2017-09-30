@@ -32,6 +32,7 @@ from flask import make_response
 # Flask app should start in global layout
 app = Flask(__name__)
 
+db = MySQLdb.connect("myinstance","root","472union", "dfp", charset='utf8')
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -48,30 +49,85 @@ def webhook():
     r.headers['Content-Type'] = 'application/json'
     return r
 
+#FROM API.AI
+    # "result": {
+    #     "source": "agent",
+    #     "resolvedQuery": "how many impressions did gq serve yesterday?",
+    #     "action": "capacity",
+    #     "actionIncomplete": false,
+    #     "parameters": {
+    #       "brand": "gq",
+    #       "date-time": "2017-09-15",
+    #       "geo-country": "",
+    #       "metric": "impressions"
+    #     },
+    #     "contexts": [
+    #       {
+    #         "name": "date-time",
+    #         "parameters": {
+    #           "date-time.original": "yesterday?",
+    #           "geo-country.original": "",
+    #           "metric": "impressions",
+    #           "metric.original": "impressions",
+    #           "date-time": "2017-09-15",
+    #           "brand.original": "gq",
+    #           "brand": "gq",
+    #           "geo-country": ""
+    #         },
+    #         "lifespan": 5
+    #       }
+
+  # "result": {
+  #   "source": "agent",
+  #   "resolvedQuery": "what's the weather in miami",
+  #   "action": "yahooWeatherForecast",
+  #   "actionIncomplete": false,
+  #   "parameters": {
+  #     "geo-city": "Miami",
+  #     "zip-code": ""
+  #   }
 
 def processRequest(req):
+
     if req.get("result").get("action") != "yahooWeatherForecast":
         return {}
-    baseurl = "https://query.yahooapis.com/v1/public/yql?"
-    yql_query = makeYqlQuery(req)
+
+#    baseurl = "https://query.yahooapis.com/v1/public/yql?"
+    yql_query = makeSqlQuery(req)
     if yql_query is None:
         return {}
-    yql_url = baseurl + urlencode({'q': yql_query}) + "&format=json"
-    result = urlopen(yql_url).read()
+    
+    
+    cursor = db.cursor()
+    result=cursor.execute(makeSqlQuery(req))
+    #old code yql_url = baseurl + urlencode({'q': yql_query}) + "&format=json"
+    #old code  result = urlopen(yql_url).read()
+    result =cursor.execute('""'+makeSqlQuery(req)+ '""')
     data = json.loads(result)
     res = makeWebhookResult(data)
     return res
 
 
-def makeYqlQuery(req):
+def makeSqlQuery(req):
     result = req.get("result")
     parameters = result.get("parameters")
-    city = parameters.get("geo-city")
-    if city is None:
-        return None
+        #change this
+    brand = parameters.get("brand")
+    aidate = parameters.get("date-time")
+    country = parameters.get("geo-country")
+    rawmetric = parameters.get("metric")
 
-    return "select * from weather.forecast where woeid in (select woeid from geo.places(1) where text='" + city + "')"
+    options = {'impressions':"sum(imps)",'clicks': "count(1)",'sell-thru' :"case when line_item_type like "'S%'" then count(1) else 0 end / count(1)", 'click-thru':doThere, 'ecpm':doThere, 'rpm':doThere}
+    metric = options.get(rawmetric)
 
+    table_sourcedict = {"impressions":"hive.dfp.network_impressions","clicks":"hive.dfp.network_clicks"}
+    table_source = options.get(table_sourcedict)
+
+        #log count
+    return "select " + metric + " from " table_source " where dt >= "+ aidate +" and brand = " + brand + ';'
+        # select sum(imps) from dfp.network_impressions where dt >= "2017-09-15" and brand = "GQ";
+        #ratio return "select " + numerator +"/" + denomenator + " from " table_ratio " where dt >= "+ aidate +" and brand = " + brand
+    
 
 def makeWebhookResult(data):
     query = data.get('query')
@@ -96,8 +152,8 @@ def makeWebhookResult(data):
     if condition is None:
         return {}
 
-    # print(json.dumps(item, indent=4))
 
+        
     speech = "Today in " + location.get('city') + ": " + condition.get('text') + \
              ", the temperature is " + condition.get('temp') + " " + units.get('temperature')
 
